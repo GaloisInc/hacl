@@ -1,0 +1,9 @@
+This script 'ecdsa.saw' in this directory performs a proof of
+equivalence between the Java ECDSA implementation contained in
+'ecdsa.jar' and the Cryptol-generated SBV files located in the 'sbv'
+subdirectory.
+
+To run it, edit run.sh to point to the correct location of 'classes.jar'
+or 'rt.jar', from JDK 6, on your machine. Then do:
+
+    ./run.sh

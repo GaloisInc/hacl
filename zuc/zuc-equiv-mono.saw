@@ -1,0 +1,27 @@
+/* Example instrumented to collect measurements for iFM paper. */
+let proof_wrap t = do { print_goal_size; t; };
+
+let {{ t (x : [32]) = drop`{1} x : [31] }};
+
+let F_spec (zuc2 : CryptolModule) = do {
+    X0 <- llvm_var "BRC_X0" (llvm_int 32);
+    X1 <- llvm_var "BRC_X1" (llvm_int 32);
+    X2 <- llvm_var "BRC_X2" (llvm_int 32);
+    R1 <- llvm_var "F_R1" (llvm_int 32);
+    R2 <- llvm_var "F_R2" (llvm_int 32);
+    S0a <- llvm_var "S0" (llvm_array 256 (llvm_int 8));
+    S1a <- llvm_var "S1" (llvm_array 256 (llvm_int 8));
+    llvm_assert {{ S0a == zuc2::S0Table }};
+    llvm_assert {{ S1a == zuc2::S1Table }};
+    let res = {{ zuc2::F ([X0, X1, X2], [R1, R2]) }};
+    llvm_return {{ res.0 }};
+    llvm_ensure_eq "F_R1" {{ res.1 @ 0 }};
+    llvm_ensure_eq "F_R2" {{ res.1 @ 1 }};
+    llvm_verify_tactic (proof_wrap z3);
+};
+
+zucbc <- llvm_load_module "zuc.bc";
+zuccry <- cryptol_load "zuc2.cry";
+
+print "Proving equivalence with Cryptol spec.";
+F_ov2 <- time (llvm_verify zucbc "F" [] (F_spec zuccry));

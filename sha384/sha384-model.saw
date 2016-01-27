@@ -1,0 +1,36 @@
+import "SHA384.cry";
+//let sha384_class = "org.bouncycastle.crypto.digests.SHA384Digest";
+//javasha <- java_load_class sha384_class;
+llvmsha <- llvm_load_module "sha512.bc";
+w <- fresh_symbolic "w" {| [80][64] |};
+outs <- fresh_symbolic "outs" {| [8][64] |};
+
+/*
+let jin = [ ("org.bouncycastle.crypto.digests.LongDigest.K", {{ Ks512 }})
+          , ("w", w)
+          , ("outs", {{ outs # [0] }})
+          ];
+let jout = ["outs"];
+jinner_nosat <- time (java_symexec javasha "blockInner" jin jout false);
+jinner_sat <- time (java_symexec javasha "blockInner" jin jout true);
+*/
+
+let lalloc = [ ("w", 80), ("outs", 9) ];
+let lin = [ ("*w", w, 80)
+          , ("*outs", {{ outs # [0] }}, 9)
+          ];
+let lout = [ ("*outs", 9) ];
+linner_nosat <- time (llvm_symexec llvmsha "Block512_Inner" lalloc lin lout false);
+print (term_size linner_nosat);
+linner_sat <- time (llvm_symexec llvmsha "Block512_Inner" lalloc lin lout true);
+print (term_size linner_sat);
+
+/*
+text <- fresh_symbolic "text" {| [127][8] |};
+let lalloc2 = [("text", 127), ("output", 48)];
+let lin2 = [ ("*text", text, 127), ("*output", {{ zero : [48][8] }}, 48) ];
+let lout2 = [("*output", 48)];
+linner_nosat <- time (llvm_symexec llvmsha "testSha" lalloc2 lin2 lout2 false);
+*/
+
+print "Done.";

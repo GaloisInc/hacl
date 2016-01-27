@@ -1,0 +1,296 @@
+/* Example instrumented to collect measurements for iFM paper. */
+
+let proof_wrap t = do { print_goal_size; z3; };
+
+// This proof shows the equivalence of the Bouncycastle, Libgcrypt,
+// and Cryptol 2 implementations of SHA384.
+
+import "SHA384.cry";
+
+let crule t = rewrite (cryptol_ss ()) t;
+ss1 <- add_prelude_eqs [ "ite_not"
+                       , "ite_nest1"
+                       , "ite_nest2"
+                       , "ite_fold_not"
+                       , "ite_eq"
+                       , "ite_bit"
+                       , "ite_bit_false_1"
+                       , "ite_bit_true_1"
+                       , "ite_eq_cong_1"
+                       , "ite_eq_cong_2"
+                       , "ite_split_cong"
+                       , "ite_join_cong"
+                       , "eq_refl"
+                       , "at_single"
+                       ] (cryptol_ss ());
+
+not_not         <- crule {{ \(x:Bit) -> (~(~x)) == x }};
+not_or          <- crule {{ \x y -> (~((x:Bit) || (y:Bit))) == ((~x) && (~y)) }};
+not_and         <- crule {{ \x y -> (~((x:Bit) && (y:Bit))) == ((~x) || (~y)) }};
+and_idem        <- crule {{ \x -> (x && x) == (x : Bit) }};
+and_idem_not1   <- crule {{ \x -> ((~ x) && x) == False }};
+and_idem_not2   <- crule {{ \x -> (x && (~ x)) == False }};
+or_idem         <- crule {{ \x -> (x || x) == (x : Bit) }};
+or_idem_not1    <- crule {{ \x -> ((~ x) || x) == True }};
+or_idem_not2    <- crule {{ \x -> (x || (~ x)) == True }};
+and_true_elim1  <- crule {{ \x -> (True && x) == x }};
+and_true_elim2  <- crule {{ \x -> (x && True) == x }};
+and_false_elim1 <- crule {{ \x -> (False && x) == False }};
+and_false_elim2 <- crule {{ \x -> (x && False) == False }};
+and_left_assoc  <- crule {{ \x y z -> ((x:Bit) && (y && z)) == ((x && y) && z) }};
+and_redundant1  <- crule {{ \x y -> (((x:Bit) && y) && y) == (x && y) }};
+and_redundant2  <- crule {{ \x y -> (((x:Bit) && y) && x) == (x && y) }};
+or_true_elim1   <- crule {{ \x -> (True || x) == True }};
+or_true_elim2   <- crule {{ \x -> (x || True) == True }};
+or_false_elim1  <- crule {{ \x -> (False || x) == x }};
+or_false_elim2  <- crule {{ \x -> (x || False) == x }};
+or_redundant1   <- crule {{ \x y -> (((x:Bit) || y) || y) == (x || y) }};
+or_redundant2   <- crule {{ \x y -> (((x:Bit) || y) || x) == (x || y) }};
+eq_id_bool      <- crule {{ \x -> ((x : Bit) == x) == True }};
+eq_id_int       <- crule {{ \x -> ((x : [32]) == x) == True }};
+eq_id_long      <- crule {{ \x -> ((x : [64]) == x) == True }};
+
+ let ss = addsimps' [ not_not
+                    , and_idem
+                    , and_idem_not1
+                    , and_idem_not2
+                    , or_idem
+                    , or_idem_not1
+                    , or_idem_not2
+                    , and_true_elim1
+                    , and_true_elim2
+                    , and_false_elim1
+                    , and_false_elim2
+                    , and_left_assoc
+                    , or_true_elim1
+                    , or_true_elim2
+                    , or_false_elim1
+                    , or_false_elim2
+                    , or_redundant1
+                    , or_redundant2
+                    , eq_id_bool
+                    , eq_id_int
+                    , eq_id_long
+                    ] ss1;
+
+let sha384_class = "org.bouncycastle.crypto.digests.SHA384Digest";
+
+// Java version
+let jlong n = java_var n java_long;
+let jresult v =
+  do { java_return v; java_verify_tactic (proof_wrap abc); };
+
+let {{
+  jsha_wrap : [127][32] -> [48][32]
+  jsha_wrap input = [ b # zero | b <- output]
+    where output = split (sha384 [ take b | b <- input ]) : [48][8]
+}};
+
+let jternary_spec f = do {
+    x <- jlong "x";
+    y <- jlong "y";
+    z <- jlong "z";
+    jresult {{ f (x, y, z) }};
+};
+
+let junary_spec f = do {
+    x <- jlong "x";
+    jresult {{ f x }};
+};
+
+let jt1spec fn = do {
+  h <- jlong "h";
+  e <- jlong "e";
+  f <- jlong "f";
+  g <- jlong "g";
+  w <- jlong "w";
+  k <- jlong "k";
+  jresult {{ fn h e f g w k }};
+};
+
+let jt2spec f = do {
+  a <- jlong "a";
+  b <- jlong "b";
+  c <- jlong "c";
+  jresult {{ f a b c }};
+};
+
+let jwspec f = do {
+  w2 <- jlong "w2";
+  w7 <- jlong "w7";
+  w15 <- jlong "w15";
+  w16 <- jlong "w16";
+  jresult {{ f w2 w7 w15 w16 }};
+};
+
+let jinnerspec f = do {
+  k <- java_var "org.bouncycastle.crypto.digests.LongDigest.K" (java_array 80 java_long);
+  w <- java_var "w" (java_array 80 java_long);
+  outs <- java_var "outs" (java_array 9 java_long);
+  java_assert {{ k == Ks512 }};
+  java_assert {{ (outs@8) < 80 }};
+  java_ensure_eq "outs" {{ f w outs }};
+  java_verify_tactic (unint_z3 ["Block512_T1", "Block512_T2"]);
+};
+
+let jblockspec f = do {
+  k <- java_var "org.bouncycastle.crypto.digests.LongDigest.K" (java_array 80 java_long);
+  w <- java_var "this.W" (java_array 80 java_long);
+  h1 <- java_var "this.H1" java_long;
+  h2 <- java_var "this.H2" java_long;
+  h3 <- java_var "this.H3" java_long;
+  h4 <- java_var "this.H4" java_long;
+  h5 <- java_var "this.H5" java_long;
+  h6 <- java_var "this.H6" java_long;
+  h7 <- java_var "this.H7" java_long;
+  h8 <- java_var "this.H8" java_long;
+  java_var "this.wOff" java_int;
+  java_assert {{ k == Ks512 }};
+  let res = {{ f ([h1,h2,h3,h4,h5,h6,h7,h8], (w @@ ([0..15] : [16][4]))) }};
+  java_ensure_eq "this.H1" {{ res @ 0 }};
+  java_ensure_eq "this.H2" {{ res @ 1 }};
+  java_ensure_eq "this.H3" {{ res @ 2 }};
+  java_ensure_eq "this.H4" {{ res @ 3 }};
+  java_ensure_eq "this.H5" {{ res @ 4 }};
+  java_ensure_eq "this.H6" {{ res @ 5 }};
+  java_ensure_eq "this.H7" {{ res @ 6 }};
+  java_ensure_eq "this.H8" {{ res @ 7 }};
+  java_modify "this.wOff";
+  java_allow_alloc;
+  java_sat_branches true;
+};
+
+let jshaspec f = do {
+  java_class_var "digest" (java_class "org.bouncycastle.crypto.digests.SHA384Digest");
+  input <- java_var "input" (java_array 127 java_byte);
+  output <- java_var "output" (java_array 48 java_byte);
+  java_ensure_eq "output" {{ f input }};
+  java_allow_alloc;
+  java_modify "digest.W";
+  java_modify "digest.H1";
+  java_modify "digest.H2";
+  java_modify "digest.H3";
+  java_modify "digest.H4";
+  java_modify "digest.H5";
+  java_modify "digest.H6";
+  java_modify "digest.H7";
+  java_modify "digest.H8";
+  java_verify_tactic (proof_wrap z3);
+};
+
+// C version
+let lverify module name spec = llvm_verify module name [] spec;
+let llong n = llvm_var n (llvm_int 64);
+let lresult v =
+  do { llvm_return v; llvm_verify_tactic (proof_wrap abc); };
+
+let lternary_spec f = do {
+  x <- llong "x";
+  y <- llong "y";
+  z <- llong "z";
+  lresult {{ f (x,y,z) }};
+};
+
+let lunary_spec f = do {
+  x <- llong "x";
+  lresult {{ f x }};
+};
+
+let lt1spec fn = do {
+  h <- llong "h";
+  e <- llong "e";
+  f <- llong "f";
+  g <- llong "g";
+  w <- llong "w";
+  k <- llong "k";
+  lresult {{ fn h e f g w k }};
+};
+
+let lt2spec f = do {
+  a <- llong "a";
+  b <- llong "b";
+  c <- llong "c";
+  lresult {{ f a b c }};
+};
+
+let lwspec f = do {
+  w2 <- llong "w2";
+  w7 <- llong "w7";
+  w15 <- llong "w15";
+  w16 <- llong "w16";
+  lresult {{ f w2 w7 w15 w16 }};
+};
+
+let linnerspec f = do {
+  k <- llvm_var "k" (llvm_array 80 (llvm_int 64));
+  w <- llvm_ptr "w" (llvm_array 80 (llvm_int 64));
+  outs <- llvm_ptr "outs" (llvm_array 9 (llvm_int 64));
+  llvm_assert {{ k == Ks512 }};
+  llvm_assert {{ (outs@8) < 80 }};
+  llvm_ensure_eq "*outs" {{ f w outs }};
+  llvm_verify_tactic (unint_z3 ["Block512_T1", "Block512_T2"]);
+};
+
+let lshaspec f = do {
+  text <- llvm_ptr "text" (llvm_array 127 (llvm_int 8));
+  llvm_ptr "output" (llvm_array 48 (llvm_int 8));
+  llvm_ensure_eq "*output" {{ split (f text) : [48][8] }};
+  llvm_sat_branches true;
+  llvm_verify_tactic (proof_wrap z3);
+};
+
+/*
+ * Put everything together
+ */
+
+let main = do {
+    llvmsha <- llvm_load_module "sha512.bc";
+    javasha <- java_load_class sha384_class;
+    javawrapper <- java_load_class "DigestWrapper";
+
+    // SBV Version
+    let ref_ch     = {{ Ch }};
+    let ref_maj    = {{ Maj }};
+    let ref_sum0   = {{ UpperSigma_0 }};
+    let ref_sum1   = {{ UpperSigma_1 }};
+    let ref_sigma0 = {{ LowerSigma_0 }};
+    let ref_sigma1 = {{ LowerSigma_1 }};
+    let ref_t1     = {{ Block512_T1 }};
+    let ref_t2     = {{ Block512_T2 }};
+    let ref_w      = {{ Block512_W }};
+    let ref_inner  = {{ Block512_Inner }};
+    let ref_block  = {{ block512 }};
+    let ref_sha    = {{ sha384 }};
+
+    // Level 0 theorems
+    jch_ms     <- time (java_verify javasha "Ch"     []  (jternary_spec ref_ch));
+    jmaj_ms    <- time (java_verify javasha "Maj"    []  (jternary_spec ref_maj));
+    jsum0_ms   <- time (java_verify javasha "Sum0"   []  (junary_spec ref_sum0));
+    jsum1_ms   <- time (java_verify javasha "Sum1"   []  (junary_spec ref_sum1));
+    jsigma0_ms <- time (java_verify javasha "Sigma0" []  (junary_spec ref_sigma0));
+    jsigma1_ms <- time (java_verify javasha "Sigma1" []  (junary_spec ref_sigma1));
+
+    lch_ms     <- time (lverify llvmsha "Ch"     (lternary_spec ref_ch));
+    lmaj_ms    <- time (lverify llvmsha "Maj"    (lternary_spec ref_maj));
+    lsum0_ms   <- time (lverify llvmsha "Sum0"   (lunary_spec ref_sum0));
+    lsum1_ms   <- time (lverify llvmsha "Sum1"   (lunary_spec ref_sum1));
+    lsigma0_ms <- time (lverify llvmsha "S0"     (lunary_spec ref_sigma0));
+    lsigma1_ms <- time (lverify llvmsha "S1"     (lunary_spec ref_sigma1));
+
+    // Level 1 theorems
+    lt1_ms <- time (llvm_verify llvmsha "Block512_T1" [lsum1_ms, lch_ms] (lt1spec ref_t1));
+    lt2_ms <- time (llvm_verify llvmsha "Block512_T2" [lsum0_ms, lmaj_ms] (lt2spec ref_t2));
+    lw_ms <- time (llvm_verify llvmsha "Block512_W" [lsigma0_ms, lsigma1_ms] (lwspec ref_w));
+
+    jt1_ms <- time (java_verify javasha "blockT1" [jsum1_ms, jch_ms] (jt1spec ref_t1));
+    jt2_ms <- time (java_verify javasha "blockT2" [jsum0_ms, jmaj_ms] (jt2spec ref_t2));
+    jw_ms <- time (java_verify javasha "blockW" [jsigma0_ms, jsigma1_ms] (jwspec ref_w));
+
+    // Level 2 theorems
+    linner_ms <- time (llvm_verify llvmsha "Block512_Inner"
+      [lt1_ms, lt2_ms] (linnerspec ref_inner));
+    jinner_ms <- time (java_verify javasha "blockInner"
+      [jt1_ms, jt2_ms] (jinnerspec ref_inner));
+
+    print "Done.";
+};

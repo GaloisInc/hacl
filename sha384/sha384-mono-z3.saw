@@ -1,0 +1,52 @@
+/* Example instrumented to collect measurements for iFM paper. */
+
+let proof_wrap t = do { print_goal_size; z3; };
+
+// This proof shows the equivalence of the Bouncycastle, Libgcrypt,
+// and Cryptol 2 implementations of SHA384.
+
+import "SHA384.cry";
+
+let sha384_class = "org.bouncycastle.crypto.digests.SHA384Digest";
+
+// Java version
+let jinnerspec f = do {
+  k <- java_var "org.bouncycastle.crypto.digests.LongDigest.K" (java_array 80 java_long);
+  w <- java_var "w" (java_array 80 java_long);
+  outs <- java_var "outs" (java_array 9 java_long);
+  java_assert {{ k == Ks512 }};
+  java_assert {{ (outs@8) < 80 }};
+  java_ensure_eq "outs" {{ f w outs }};
+  java_verify_tactic (proof_wrap z3);
+};
+
+// C version
+let linnerspec f = do {
+  k <- llvm_var "k" (llvm_array 80 (llvm_int 64));
+  w <- llvm_ptr "w" (llvm_array 80 (llvm_int 64));
+  outs <- llvm_ptr "outs" (llvm_array 9 (llvm_int 64));
+  llvm_assert {{ k == Ks512 }};
+  llvm_assert {{ (outs@8) < 80 }};
+  llvm_ensure_eq "*outs" {{ f w outs }};
+  llvm_verify_tactic (proof_wrap z3);
+};
+
+/*
+ * Put everything together
+ */
+
+let main = do {
+    llvmsha <- llvm_load_module "sha512.bc";
+    javasha <- java_load_class sha384_class;
+    javawrapper <- java_load_class "DigestWrapper";
+
+    // SBV Version
+    let ref_inner  = {{ Block512_Inner }};
+
+    linner_ms2 <- time (llvm_verify llvmsha "Block512_Inner"
+      [] (linnerspec ref_inner));
+    jinner_ms2 <- time (java_verify javasha "blockInner"
+      [] (jinnerspec ref_inner));
+
+    print "Done.";
+};
