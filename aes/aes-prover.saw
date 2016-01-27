@@ -1,0 +1,44 @@
+let proof_wrap t = do { print_goal_size; t; };
+let picosat = external_cnf_solver "picosat" ["%f"];
+
+import "AES.cry";
+
+let {{
+  aesExtract x = aesEncrypt (pt,key)
+    // This input transform is specific to the SAW backend.
+    // See ':/intTests/test0017_lss_aig' for discussion of
+    // the IO encodings for different backends.
+    where [pt,key] = split x
+}};
+
+let main = do {
+  m <- llvm_load_module "aes.bc";
+
+  print "Doing symbolic execution";
+  key <- fresh_symbolic "key" {| [4][32] |};
+  pt <- fresh_symbolic "pt" {| [4][32] |};
+  let allocs = [("pt", 4), ("key", 4), ("ct", 4)];
+  let inputs = [("*pt", pt, 4), ("*key", key, 4), ("*ct", {{ zero : [4][32] }}, 4)];
+  let outputs = [("*ct", 4)];
+
+  aesLLVM <- time (llvm_symexec m "aes128BlockEncrypt" allocs inputs outputs false);
+  aesLLVMFn <- abstract_symbolic aesLLVM;
+  let {{ aesLLVMFlat x = join (aesLLVMFn (split k) (split p))
+           where [(p:[128]), (k:[128])] = split x
+      }};
+
+  print "Term sizes (Cryptol)";
+  print (term_size {{ aesExtract }});
+  print (term_tree_size {{ aesExtract }});
+  print (type {{ aesExtract }});
+
+  print "Term sizes (LLVM)";
+  print (term_size {{ aesLLVMFlat }});
+  print (term_tree_size {{ aesLLVMFlat }});
+
+  print "Type (LLVM)";
+  print (type {{ aesLLVMFlat }});
+
+  res <- time (prove (proof_wrap abc) {{ \x -> aesExtract x == aesLLVMFlat x }});
+  print res;
+};
